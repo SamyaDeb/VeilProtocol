@@ -54,7 +54,7 @@ docs lazily — only pull the one relevant to the slice you are building.
 ```
 circuits/        Circom: note/merkle/nullifier base, swap, lend, kyc_credential, batch_settle
 contracts/       Soroban Rust: veil_core, amm_pool, lending, asp, viewkey(lib)
-app/             TS/React: WASM prover, Freighter, note store, swap/lend/auditor UIs
+client/          TS/React: WASM prover, Freighter, note store, swap/lend/auditor UIs
 poseidon2/       Poseidon2 params + reference impl (shared circuit/contract)
 circuit-keys/    pinned proving/verification keys + sha256 manifest
 tools/ceremony-cli/  Phase-2 trusted-setup tooling

@@ -10,6 +10,11 @@ indexer/node_modules/
 # Circom build output (generated, not source)
 circuits/build/
 
+# Powers of Tau ceremony file — 144MB, too large for GitHub
+# Download from: https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_17.ptau
+# sha256 is pinned in circuit-keys/manifest.sha256
+circuit-keys/dev/*.ptau
+
 # Circuit keys — keep dev keys, ignore any local solo-generated overrides
 # (pinned keys in circuit-keys/dev/ ARE committed per SECURITY §5)
 
