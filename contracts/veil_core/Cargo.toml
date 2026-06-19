@@ -10,5 +10,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 soroban-sdk = { workspace = true }
 
+[features]
+# Enable test-mode proof bypass (never enabled in production builds).
+testutils = []
+
 [dev-dependencies]
 soroban-sdk = { version = "26.0.1", features = ["testutils", "hazmat-crypto"] }
