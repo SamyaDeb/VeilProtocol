@@ -1,5 +1,5 @@
 [workspace]
-members = ["veil_core", "asp"]
+members = ["veil_core", "asp", "amm_pool", "lending"]
 resolver = "2"
 
 [workspace.dependencies]
