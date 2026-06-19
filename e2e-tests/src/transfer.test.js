@@ -3,17 +3,18 @@ import { Address } from '@stellar/stellar-sdk';
 const StellarSdk = { Address };
 import { buildPoseidon } from 'circomlibjs';
 import { MerkleTree, buildNonMembershipProof } from './merkle.js';
-import { proveTransfer, serializeProof, serializePublicInputs } from '../../app/src/prover/transfer.js';
-import { proveDeposit, serializeProof as serializeDepositProof } from '../../app/src/prover/deposit.js';
-import { encryptNoteForAuditor, decryptNoteAsAuditor } from '../../app/src/viewkey/encrypt.js';
+import { proveTransfer, serializeProof, serializePublicInputs } from '../../client/src/prover/transfer.js';
+import { proveDeposit, serializeProof as serializeDepositProof } from '../../client/src/prover/deposit.js';
+import { encryptNoteForAuditor, decryptNoteAsAuditor } from '../../client/src/viewkey/encrypt.js';
 
 // ─── config ──────────────────────────────────────────────────────────────────
 
-const CORE_ID  = process.env.VEIL_CORE ?? '';
-const ASP_ID   = process.env.ASP ?? '';
-const RPC_URL  = process.env.SOROBAN_RPC ?? 'https://soroban-testnet.stellar.org';
-const SECRET   = process.env.SECRET ?? '';
-const NETWORK  = process.env.NETWORK ?? 'testnet';
+const CORE_ID   = process.env.VEIL_CORE ?? '';
+const ASP_ID    = process.env.ASP ?? '';
+const TOKEN_ID  = process.env.TOKEN ?? '';    // TEST-RWA or native XLM SAC on testnet
+const RPC_URL   = process.env.SOROBAN_RPC ?? 'https://soroban-testnet.stellar.org';
+const SECRET    = process.env.SECRET ?? '';
+const NETWORK   = process.env.NETWORK ?? 'testnet';
 const PASSPHRASE = NETWORK === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -149,6 +150,8 @@ async function main() {
     const auditorCtDep = await encryptNoteForAuditor(noteA, auditorPk, 777n);
 
     await submitTx(CORE_ID, 'deposit', [
+        new StellarSdk.Address(kp.publicKey()).toScVal(),  // depositor
+        new StellarSdk.Address(TOKEN_ID).toScVal(),        // token_contract
         new StellarSdk.Address(ASP_ID).toScVal(),
         toStruct({ a: toBytesN64(serializedDepProof.a), b: toBytesN128(serializedDepProof.b), c: toBytesN64(serializedDepProof.c) }),
         toStruct({

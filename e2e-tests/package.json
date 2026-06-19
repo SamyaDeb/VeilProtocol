@@ -5,6 +5,12 @@
   "type": "module",
   "scripts": {
     "deposit": "node src/deposit.test.js",
+    "transfer": "node src/transfer.test.js",
+    "withdraw-and-audit": "node src/withdraw-and-audit.test.js",
+    "amm-spike": "node src/amm-spike.test.js",
+    "lending": "node src/lending.test.js",
+    "tampered-proof-rejected": "node src/tampered-proof-rejected.test.js",
+    "mainnet-roundtrip": "node src/mainnet-roundtrip.test.js",
     "test": "node src/deposit.test.js"
   },
   "dependencies": {
