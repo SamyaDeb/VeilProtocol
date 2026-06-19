@@ -1,0 +1,32 @@
+#!/usr/bin/env node
+import { program } from 'commander';
+import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+
+program
+  .command('e2e <action>')
+  .option('--network <network>', 'Network to run against', 'testnet')
+  .action((action, options) => {
+    if (action === 'deposit' || action === 'transfer') {
+       const scriptPath = path.resolve(process.cwd(), `e2e-tests/src/${action}.test.js`);
+       
+       const envPath = path.resolve(process.cwd(), `deployments/${options.network}.env`);
+       let netEnv = {};
+       if (fs.existsSync(envPath)) {
+           const content = fs.readFileSync(envPath, 'utf8');
+           content.split('\n').forEach(line => {
+               if (line.trim() && !line.startsWith('#')) {
+                   const [key, ...val] = line.split('=');
+                   netEnv[key.trim()] = val.join('=').trim().replace(/^"|"$/g, '');
+               }
+           });
+       }
+
+       const env = { ...process.env, ...netEnv, NETWORK: options.network };
+       const child = spawn('node', [scriptPath], { stdio: 'inherit', env });
+       child.on('close', code => process.exit(code));
+    }
+  });
+
+program.parse(process.argv);

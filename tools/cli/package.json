@@ -1,0 +1,11 @@
+{
+  "name": "veil-cli",
+  "version": "1.0.0",
+  "bin": {
+    "veil": "./bin/veil"
+  },
+  "type": "module",
+  "dependencies": {
+    "commander": "^11.0.0"
+  }
+}

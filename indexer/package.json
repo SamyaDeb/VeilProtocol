@@ -1,0 +1,16 @@
+{
+  "name": "@veil/indexer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^13.1.0",
+    "better-sqlite3": "^11.3.0",
+    "circomlibjs": "^0.1.7"
+  }
+}
