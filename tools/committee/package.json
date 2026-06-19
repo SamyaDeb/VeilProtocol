@@ -1,0 +1,16 @@
+{
+  "name": "veil-committee",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "M3 mock committee: threshold-decrypts batch orders and posts settle_batch",
+  "main": "index.js",
+  "scripts": {
+    "settle": "node index.js settle",
+    "refund": "node index.js refund"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.0.1",
+    "circomlibjs": "^0.1.7",
+    "snarkjs": "^0.7.6"
+  }
+}
