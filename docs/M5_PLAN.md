@@ -84,17 +84,17 @@ Blocks on: Phase 1 vks; M4 `ENC_RESERVES`.
 
 Blocks on: Phase 1, Phase 2.
 
-- [ ] **T3.0** `app/src/prover/lp.ts` + `app/src/ui/LiquidityForm.tsx` — add/remove LP; show provable
+- [x] **T3.0** `app/src/prover/lp.ts` + `app/src/ui/LiquidityForm.tsx` — add/remove LP; show provable
   accrued fees to the LP (computed client-side from reserve commitments at add vs now).
-- [ ] **T3.1** Portability: ensure the wallet treats a swap-output note and a deposit note identically —
+- [x] **T3.1** Portability: ensure the wallet treats a swap-output note and a deposit note identically —
   `selectInputs` can feed either into `add_liquidity`. No conversion code path.
 
 ---
 
 ## Phase 4 — Deploy + E2E
 
-- [ ] **T4.0** Upgrade `amm_pool` on testnet; load the two LP vks.
-- [ ] **T4.1** `e2e-tests/src/amm-lp.test.ts` — assertions per TEST_PLAN M5:
+- [x] **T4.0** Upgrade `amm_pool` on testnet; load the two LP vks.
+- [x] **T4.1** `e2e-tests/src/amm-lp.test.ts` — assertions per TEST_PLAN M5:
   1. **LP add/remove with hidden size**: on-chain shows only commitments/nullifiers, never the LP amount.
   2. **Pro-rata fee accrual provable to the LP**: after some swap volume, remove returns principal + fees.
   3. **Note portability (RULE 2)**: a Module-1 swap-output note opens an LP position with **no conversion**.

@@ -1,13 +1,16 @@
 # M8 Build Plan — Mainnet Launch with BENJI + Reflector
 
-Milestone M8 exit gate: `veil e2e mainnet-roundtrip --network mainnet --asset BENJI` green.
-Read alongside CLAUDE.md, M7_PLAN.md (the sign-off gate this depends on), PRD.md (§5 scope, §6 success
-metrics, §8 dependencies), ARCHITECTURE.md (full), CONTRACTS.md (§4 oracle, §1 TTL), REFERENCES.md
-(Reflector mainnet, BENJI), SECURITY.md (§8 gate), ROADMAP.md (M8), TEST_PLAN.md (M8).
+**Goal:** Flip testnet → mainnet. M7 made the codebase production-equivalent; M8
+runs the external processes (ceremony, audit, bug bounty) and deploys behind the
+SECURITY §8 gate. The only new code is the mainnet deploy script, the mainnet smoke
+e2e, and any audit-finding remediations.
 
-> **Hard precondition:** M7's SECURITY §8 sign-off gate is fully satisfied. Mainnet deploy is forbidden
-> until every box is checked. This milestone wires real assets, deploys behind that gate, and proves a
-> real round-trip on mainnet.
+Hard precondition: every box in the M7 exit gate is checked.
+
+Exit gate: `veil e2e mainnet-roundtrip --network mainnet --asset BENJI` green.
+
+Read alongside: CLAUDE.md, M7_PLAN.md (all boxes checked first), SECURITY.md §8,
+ROADMAP.md M8, TEST_PLAN.md M8, REFERENCES.md (Reflector mainnet, BENJI).
 
 ---
 
@@ -15,124 +18,221 @@ metrics, §8 dependencies), ARCHITECTURE.md (full), CONTRACTS.md (§4 oracle, §
 
 | Area | Deliverable |
 |------|-------------|
-| Real asset | Swap the dev **TEST-RWA** target for **Franklin Templeton BENJI** (asset_id + SAC address) |
-| Oracle | Wire **Reflector mainnet** feeds into `lending` |
-| Deploy | `veil_core` + `asp` + `amm_pool` + `lending` to **mainnet** behind the SECURITY §8 gate |
-| Ops | Monitoring + **anonymity-set metric** (PRD §6): commitments-in-pool growth, no de-anon incident |
-| Proof | ASP-gated BENJI deposit → private swap → private withdraw round-trip on mainnet |
+| Ceremony | Multi-party Phase-2 for every production circuit; transcripts + ceremony keys pinned |
+| Audit | Two independent audit passes (contract + circuit/setup); all Critical/High remediated |
+| Bug bounty | Funded pool live ≥ defined window before mainnet broadcast |
+| Deploy | All contracts to mainnet behind the SECURITY §8 gate assertion |
+| Smoke | ASP-gated BENJI deposit → private swap → private withdraw on mainnet |
 
 ---
 
-## Resolved design decisions (new in M8)
+## Phase 1 — Multi-party Phase-2 ceremony
 
-| Decision | Choice | Reason |
-|----------|--------|--------|
-| Target asset | **BENJI** (Franklin Templeton) on mainnet; TEST-RWA remains the testnet/dev asset | PRD §5 target; TEST-RWA ensured dev was never blocked on issuer timelines. // VERIFY BENJI SAC contract id + issuer cooperation (PRD §8) |
-| asset_id derivation | `asset_id = Poseidon(issuer, code)` for BENJI, computed once and pinned | CIRCUITS §0 asset_id definition; must match across circuit + contract + wallet. |
-| Oracle | **Reflector mainnet** SEP-40 feed for the BENJI/collateral asset | REFERENCES; PRD §8 (Reflector live on mainnet). // VERIFY mainnet Reflector contract id + feed availability for the asset |
-| Deploy gate | mainnet deploy script **asserts** the SECURITY §8 checklist artifacts (signed audits, pinned ceremony keys, key custody, bug bounty open, runbook) before broadcasting | SECURITY §8 "no exceptions". |
-| Key custody | admin (multisig), committee (t-of-n), auditor (HSM) keys in production custody; `set_admin` two-step | SECURITY §3/§6. |
-| Anonymity-set metric | indexer exposes commitments-in-pool count + growth trend; alert on de-anon signals | PRD §6 success metric. |
+Blocks on: all circuits frozen (M7 Phase 1 complete — no R1CS changes after this).
 
----
+### 1A. Ceremony execution (human contributors, external)
 
-## Hard rules in force (unchanged, now on mainnet)
+Circuits requiring a ceremony key:
+`deposit`, `kyc_credential`, `transfer`, `withdraw`, `swap`, `batch_settle`,
+`lend`, `settle_or_refund`, `repay`, (optionally `liquidate` if circuit was built).
 
-- **RULE 1:** every mainnet BENJI deposit passes `asp.check_entry` first.
-- **RULE 2 / 3 / 4:** universal notes, two nullifier sets, paired auditor ciphertext — all as in T1–T3.
-- Reflector `oracle_price` binding for any lending op (CONTRACTS §4).
+For each circuit:
+1. Start from Phase-1 Powers-of-Tau (`pot17.ptau` or larger if constraint count requires)
+2. Run `tools/ceremony-cli` with ≥N independent contributors; collect each contribution hash
+3. Verify the contribution chain: `snarkjs zkey verify <circuit>.r1cs pot.ptau <final>.zkey`
+4. Export `vk_<circuit>.json`; run `tools/vk-convert` → `vk_<circuit>.bin`
+5. Record: `sha256(final.zkey)`, `sha256(vk.bin)`, all contribution hashes → `circuit-keys/ceremony-transcript.txt`
 
----
+### 1B. Update `circuit-keys/manifest.sha256` with ceremony outputs
 
-## Phase 1 — Real asset + oracle wiring
+Move ceremony keys into `circuit-keys/prod/` (distinct from `circuit-keys/dev/`).
+Update `manifest.sha256` to point to `prod/` entries. The mainnet key gate added in
+M7 Phase 3C will refuse any key whose hash matches a `dev/` entry.
 
-Blocks on: M7 sign-off.
+Run `vk-verify` (no network): must exit 0.
 
-- [ ] **T1.0** Pin BENJI: resolve the BENJI SAC contract id + `asset_id = Poseidon(issuer, code)`; add a
-  mainnet asset config in `deployments/mainnet.json`. Verify issuer cooperation (PRD §8).
-- [ ] **T1.1** Wire Reflector **mainnet** oracle: set `lending.ORACLE` to the mainnet Reflector contract;
-  confirm the BENJI/collateral feed exists and is SEP-40 compatible; set conservative `LTV_MAX_BPS` +
-  `STALENESS`.
-- [ ] **T1.2** Frontend + indexer: switch network config to mainnet; load BENJI asset metadata; keep
-  TEST-RWA available for testnet.
+### 1C. Re-initialize on-chain VK storage with ceremony keys
+
+Re-run `deployments/m8-deploy.sh` (see Phase 2) which calls `veil_core.init_vk` for
+each circuit using the ceremony `vk.bin`. This replaces the dev keys that were loaded
+during testnet runs.
 
 ---
 
-## Phase 2 — Gated mainnet deploy
+## Phase 2 — Gated mainnet deploy script
 
-Blocks on: Phase 1; M7 SECURITY §8 gate satisfied.
+### 2A. `deployments/m8-deploy.sh`
 
-- [ ] **T2.0** Mainnet deploy script that **asserts the SECURITY §8 gate** (refuses to broadcast if any
-  artifact is missing): signed audits, pinned ceremony keys (`veil verify-keys`), key custody,
-  bug-bounty-open flag, approved runbook.
-- [ ] **T2.1** Deploy `veil_core`, `asp`, `amm_pool`, `lending` to mainnet; record contract ids in
-  `deployments/mainnet.json`.
-- [ ] **T2.2** Initialize: admin (multisig), register modules + committee, set auditor pubkey (HSM-held),
-  initialize ASP approved/blocked roots from the production compliance set, load ceremony vkeys via
-  `vk-convert` + the mainnet key gate.
+The deploy script that executes the mainnet broadcast. It enforces the SECURITY §8
+gate before any transaction is sent:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# ── SECURITY §8 gate (no exceptions) ─────────────────────────────────────────
+echo "=== Asserting SECURITY §8 gate ==="
+
+# 1. Ceremony keys in place and verified
+vk-verify --manifest circuit-keys/manifest.sha256 || { echo "FATAL: manifest mismatch"; exit 1; }
+
+# 2. No dev keys in prod path
+for f in circuit-keys/prod/*.bin; do
+    h=$(sha256sum "$f" | awk '{print $1}')
+    if grep -q "$h" circuit-keys/dev/*.bin 2>/dev/null; then
+        echo "FATAL: $f matches a dev key. Ceremony required."; exit 1
+    fi
+done
+
+# 3. Signed audit artifacts present
+[ -f "audits/pass1-signed.pdf" ]    || { echo "FATAL: audit pass 1 missing"; exit 1; }
+[ -f "audits/pass2-signed.pdf" ]    || { echo "FATAL: audit pass 2 missing"; exit 1; }
+
+# 4. Bug bounty confirmation
+[ "${BUG_BOUNTY_OPEN:-}" = "yes" ]  || { echo "FATAL: set BUG_BOUNTY_OPEN=yes"; exit 1; }
+
+# 5. Production key custody confirmed
+[ "${ADMIN_MULTISIG:-}" = "yes" ]   || { echo "FATAL: set ADMIN_MULTISIG=yes"; exit 1; }
+[ "${AUDITOR_HSM:-}" = "yes" ]      || { echo "FATAL: set AUDITOR_HSM=yes"; exit 1; }
+
+# 6. Incident runbook approved
+[ -f "docs/RUNBOOK.md" ]            || { echo "FATAL: incident runbook missing"; exit 1; }
+grep -q "APPROVED" docs/RUNBOOK.md  || { echo "FATAL: runbook not approved"; exit 1; }
+
+echo "=== Gate passed. Deploying to mainnet ==="
+
+# ── Deploy ────────────────────────────────────────────────────────────────────
+NETWORK=mainnet
+PASSPHRASE="Public Global Stellar Network ; September 2015"
+# ... (same deploy flow as m6-deploy.sh but pointing at mainnet.json config)
+```
+
+### 2B. Deploy and initialize all contracts to mainnet
+
+Same sequence as `m6-deploy.sh`:
+1. Deploy `veil_core`, `asp`, `amm_pool`, `lending`
+2. Initialize with mainnet config from `deployments/mainnet.json`
+3. Load ceremony vkeys via `init_vk` for each circuit
+4. Register modules + committee; set auditor pubkey (HSM-held)
+5. Initialize ASP approved/blocked roots from the production compliance set
+6. Record all mainnet contract ids in `deployments/mainnet.json`
 
 ---
 
-## Phase 3 — Monitoring + anonymity-set metric
+## Phase 3 — Audit passes + remediation
 
-Blocks on: Phase 2.
+Blocks on: Phase 1 (audited code uses ceremony keys); M7 Phase 3A/3B (tooling ready).
 
-- [ ] **T3.0** Indexer mainnet mode: persist the tree, expose `/root`, `/anonymity-set` (commitment count
-  + growth trend), and nullifier/disclosure event streams.
-- [ ] **T3.1** Monitoring/alerting: contract health, oracle staleness, committee liveness (→ refund path),
-  and a de-anon signal watch (PRD §6). Hook the incident runbook.
+### 3A. Audit pass 1 — Soroban contracts + M1/M3 circuits (external firm)
+
+Scope: `veil_core`, `asp`, `amm_pool`, `circuits/{deposit,transfer,withdraw,swap,batch_settle,settle_or_refund,kyc_credential}` + trusted setup review.
+
+Hand off: coverage report, SECURITY §3 contract checklist self-assessment, SECURITY §4
+circuit checklist self-assessment, ceremony transcripts, all `// VERIFY` closed.
+
+### 3B. Audit pass 2 — Lending + repay + liquidation (separate firm or isolated pass)
+
+Scope: `lending`, `circuits/{lend,repay,liquidate}`, oracle binding, liquidation path.
+This is the riskiest isolated module (SECURITY §1).
+
+### 3C. Remediation (code work when findings arrive)
+
+For each Critical/High finding:
+- Fix in code
+- Add a regression test that would have caught it
+- Update the relevant SECURITY checklist item
+
+Track Medium findings with owner + target date. Log all findings in `audits/findings.md`.
 
 ---
 
-## Phase 4 — Mainnet smoke E2E
+## Phase 4 — Bug bounty
 
-Blocks on: Phases 1–3.
+Blocks on: Phase 3.
 
-- [ ] **T4.0** `e2e-tests/src/mainnet-roundtrip.test.ts` — assertions per TEST_PLAN M8:
-  1. **ASP-gated BENJI deposit** succeeds (and a non-approved address is rejected).
-  2. **Private swap** of the deposited BENJI note (trader/size/counterparty hidden).
-  3. **Private withdraw** back to a public address — full round-trip completes.
-  4. **Reflector feed read + bound** in any lending op (oracle_price public input == fresh price).
-  5. **Monitoring + anonymity-set metric** reporting live.
-  ```
-  veil e2e mainnet-roundtrip --network mainnet --asset BENJI
-  ```
+Launch a funded bug bounty pool (e.g. Immunefi or similar). Define scope (all contracts
++ circuits + the vkey-conversion path). The pool must be live for at least the defined
+window before mainnet broadcast. Set `BUG_BOUNTY_OPEN=yes` in the gate env once live.
+
+---
+
+## Phase 5 — Mainnet smoke E2E
+
+### 5A. `e2e-tests/src/mainnet-roundtrip.test.js`
+
+Full stack on mainnet with BENJI:
+
+```javascript
+// T4.0 assertions (TEST_PLAN M8):
+// 1. ASP-gated BENJI deposit succeeds; non-approved address rejected
+// 2. Private swap of the deposited BENJI note (trader/size hidden on-chain)
+// 3. Private withdraw back to a public address (round-trip complete)
+// 4. Reflector mainnet feed read and oracle_price bound in any lending op
+// 5. /anonymity-set metric increments after the deposit
+```
+
+Add to `e2e-tests/package.json`:
+```json
+"mainnet-roundtrip": "node src/mainnet-roundtrip.test.js"
+```
+
+Run as: `source deployments/mainnet.json && npm run mainnet-roundtrip --prefix e2e-tests`
+
+---
+
+## Phase 6 — Incident runbook (`docs/RUNBOOK.md`)
+
+Write and get approved before mainnet broadcast (required by gate assertion). Sections:
+
+1. **Oracle outage** — lending halts staleness checks; no new loans until Reflector recovers;
+   existing loans are safe; liquidations use last valid price within window.
+2. **Committee halt** — if a batch is not settled within `BATCH_DEADLINE` ledgers,
+   submitters call `refund_order` with their `settle_or_refund` proof to reclaim notes.
+3. **Key compromise** — admin: run `propose_admin` → `accept_admin` from the backup
+   multisig key. Auditor: rotate `set_auditor_pubkey`; old ciphertexts remain decryptable
+   with old key; new commitments use the new key. ASP operator: `update_blocked` to
+   quarantine any affected credential immediately.
+4. **On-call contacts and escalation path.**
+5. Sign off with `# APPROVED — <date> — <name>` at the end of the file.
+
+---
+
+## Exit gate (SECURITY §8 — no exceptions)
+
+- [ ] `vk-verify --manifest circuit-keys/manifest.sha256` exits 0 (ceremony keys on disk)
+- [ ] Zero open Critical/High (both audit passes signed, in `audits/`)
+- [ ] Bug bounty open ≥ defined window (`BUG_BOUNTY_OPEN=yes`)
+- [ ] Admin keys in production multisig (`ADMIN_MULTISIG=yes`)
+- [ ] Auditor key in HSM (`AUDITOR_HSM=yes`)
+- [ ] `docs/RUNBOOK.md` contains `# APPROVED`
+- [ ] `veil e2e tampered-proof-rejected --network testnet` green (M7 carried forward)
+- [ ] `veil e2e mainnet-roundtrip --network mainnet --asset BENJI` green
 
 ---
 
 ## Dependency graph
 
 ```
-M7 sign-off ─► T1.0 ─► T1.1 ─► T1.2
-                                 │
-                                 ▼
-              (SECURITY §8 gate) ─► T2.0 ─► T2.1 ─► T2.2
-                                            T3.0 ─► T3.1
-                                            [all] ─► T4.0  (exit: mainnet-roundtrip green)
+M7 complete ──► 1A ceremony ──► 1B manifest update ──► 1C reload VKs on-chain
+                                                         │
+                                          3A audit pass 1 ──► 3C remediation
+                                          3B audit pass 2 ──► 3C remediation
+                                          4  bug bounty
+                                          2A gate script ──► 2B mainnet deploy
+                                          6  runbook
+                                          [all] ──► 5A mainnet smoke ──► EXIT
 ```
-
-## What success looks like (PRD §6 + closing)
-
-> A regulated institution deposits BENJI through a compliance gate, swaps and borrows against it on
-> Stellar mainnet with amounts and counterparties private, and a regulator can audit a specific position
-> on lawful request — none of which is possible on Stellar today. That is "100% private settlement for
-> institutions," shipped.
-
-| Metric (PRD §6) | Target |
-|---|---|
-| Mainnet deposit→swap→withdraw round-trip | works, ASP-gated, acceptable latency |
-| Browser swap proof time | within interactive budget on a commodity laptop |
-| On-chain Groth16 verify cost | within Soroban limits with margin |
-| Auditor disclosure | regulator decrypts exactly in-scope notes, nothing else |
-| RWA integration | ≥1 real issuer asset (BENJI) live |
-| Anonymity set @ 6 months | growth trend, no de-anon incident |
 
 ## Not in M8 (out of scope — PRD §5)
 
-- Cross-chain / bridge privacy; network-level (IP) anonymity; mobile apps; fiat on/off-ramp;
-  governance token; permissionless committee/ASP governance (post-grant R&D).
+- Cross-chain / bridge privacy
+- Network-level (IP) anonymity
+- Mobile apps, fiat on/off-ramp, governance token
+- Permissionless committee / ASP governance (post-grant R&D)
+- New product modules beyond M0–M6
 
 ## Done check
 
-`veil e2e mainnet-roundtrip --network mainnet --asset BENJI` exits 0 with all five T4.0 assertions
-passing — the full program is delivered.
+`veil e2e mainnet-roundtrip --network mainnet --asset BENJI` exits 0 with all five
+T5A assertions passing. The full program is delivered.
