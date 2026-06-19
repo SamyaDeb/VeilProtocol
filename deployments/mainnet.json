@@ -1,0 +1,69 @@
+{
+  "network": "mainnet",
+  "rpc_url": "https://mainnet.sorobanrpc.com",
+  "network_passphrase": "Public Global Stellar Network ; September 2015",
+
+  "contracts": {
+    "veil_core":  "",
+    "asp":        "",
+    "amm_pool":   "",
+    "lending":    "",
+    "viewkey":    ""
+  },
+
+  "assets": {
+    "TEST_RWA": {
+      "note": "Self-issued testnet fallback — NOT valid on mainnet. Remove before deploy.",
+      "issuer": "",
+      "code": "TEST-RWA"
+    },
+    "BENJI": {
+      "note": "Franklin Templeton BENJI on Stellar mainnet. Verify issuer address before deploy.",
+      "issuer": "GBVNNPOFVV2YNXNWN5KWPBFRGULBMEAPOJDBYGDQB7TK7FHVNROZBYM",
+      "code": "BENJI",
+      "asset_id_note": "Computed by tools/scripts/compute-benji-asset-id.mjs"
+    }
+  },
+
+  "oracle": {
+    "reflector_contract": "CBKZAR6BCKQPHSSDPQHTZWWPYWQXH4D6QKHE2ETNA3ZSXQIMJIRGS7D",
+    "reflector_note": "Reflector V3 on Stellar mainnet. Verify address against https://developers.stellar.org/docs/data/oracles/oracle-providers",
+    "staleness_ledgers": 100,
+    "staleness_seconds_approx": 600
+  },
+
+  "lending": {
+    "ltv_max_bps": 7500,
+    "ltv_note": "75% LTV with conservative margin. See THREAT_MODEL §5."
+  },
+
+  "amm": {
+    "batch_size_k": 8,
+    "committee_threshold_t": 2,
+    "committee_size_n": 3,
+    "committee_members": [],
+    "committee_pk": ""
+  },
+
+  "auditor": {
+    "pubkey": "",
+    "note": "Auditor BN254 pubkey (field element). Set before mainnet deploy; store privkey in HSM."
+  },
+
+  "circuit_keys_dir": "circuit-keys/prod",
+  "circuit_keys_manifest": "circuit-keys/prod/manifest.sha256",
+  "circuit_keys_note": "MUST point to prod/ not dev/. assert-mainnet-keys.sh enforces this.",
+
+  "vk_ids": {
+    "Deposit":        null,
+    "Transfer":       null,
+    "Withdraw":       null,
+    "Swap":           null,
+    "BatchSettle":    null,
+    "Lend":           null,
+    "Repay":          null,
+    "SettleOrRefund": null,
+    "KycCredential":  null
+  },
+  "vk_ids_note": "Fill with on-chain storage slot keys after ceremony + deploy. null = not yet deployed."
+}

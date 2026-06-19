@@ -59,6 +59,12 @@ async function main() {
     const transferVkHex = fs.readFileSync('circuit-keys/dev/vk_transfer.bin').toString('hex');
     runCmd(`${baseCmd} --id ${VEIL_CORE} -- init_vk --admin ${ADMIN} --vk_id '{"Transfer":[]}' --vk_bytes ${transferVkHex}`);
 
+    const addLiquidityVkHex = fs.readFileSync('circuit-keys/dev/vk_add_liquidity.bin').toString('hex');
+    runCmd(`${baseCmd} --id ${VEIL_CORE} -- init_vk --admin ${ADMIN} --vk_id '{"AddLiquidity":[]}' --vk_bytes ${addLiquidityVkHex}`);
+
+    const removeLiquidityVkHex = fs.readFileSync('circuit-keys/dev/vk_remove_liquidity.bin').toString('hex');
+    runCmd(`${baseCmd} --id ${VEIL_CORE} -- init_vk --admin ${ADMIN} --vk_id '{"RemoveLiquidity":[]}' --vk_bytes ${removeLiquidityVkHex}`);
+
     console.log('Init completed successfully.');
 }
 

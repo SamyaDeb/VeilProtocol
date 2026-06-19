@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# M4 full redeploy: veil_core (with VkId::Swap/BatchSettle) + amm_pool
+# Uses the existing SECRET/ADMIN/ASP from deployments/testnet.env
+#
+# Usage: source deployments/testnet.env && bash deployments/m4-deploy.sh
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+RPC="${SOROBAN_RPC:-https://soroban-testnet.stellar.org}"
+PASSPHRASE="${PASSPHRASE:-Test SDF Network ; September 2015}"
+SECRET="${SECRET:?Set SECRET in env}"
+ADMIN="${ADMIN:?Set ADMIN in env}"
+ASP="${ASP:?Set ASP in env}"
+NETWORK="${NETWORK:-testnet}"
+
+INVOKE="stellar contract invoke --network $NETWORK --source-account $SECRET --fee 1000000"
+WASM_DIR="contracts/target/wasm32v1-none/release"
+
+echo "=== M4 Veil Protocol deploy ==="
+
+# ── 1. Deploy fresh veil_core (includes VkId::Swap + VkId::BatchSettle) ───────
+echo ""
+echo "--- Deploying veil_core ---"
+VEIL_CORE=$(stellar contract deploy 
+    --wasm "$WASM_DIR/veil_core.wasm" 
+    --source "$SECRET" 
+    --network "$NETWORK" 
+    --fee 1000000 2>/dev/null | tail -1)
+echo "veil_core: $VEIL_CORE"
+
+# ── 2. Deploy amm_pool ────────────────────────────────────────────────────────
+echo ""
+echo "--- Deploying amm_pool ---"
+AMM_POOL=$(stellar contract deploy 
+    --wasm "$WASM_DIR/amm_pool.wasm" 
+    --source "$SECRET" 
+    --network "$NETWORK" 
+    --fee 1000000 2>/dev/null | tail -1)
+echo "amm_pool: $AMM_POOL"
+
+# ── 3. Initialize veil_core ───────────────────────────────────────────────────
+echo ""
+echo "--- Initializing veil_core ---"
+$INVOKE --id "$VEIL_CORE" -- initialize --admin "$ADMIN"
+echo "  initialize: ok"
+
+AUDITOR_PK="${AUDITOR_PK:-1b408dafebeddf0871388399b1e53bd065fd70f18580be5cdde15d7eb2c52743}"
+$INVOKE --id "$VEIL_CORE" -- set_auditor_pubkey --admin "$ADMIN" --pk "$AUDITOR_PK"
+echo "  set_auditor_pubkey: ok"
+
+# Load all circuit VKs
+for vk_name in deposit kyc_credential transfer withdraw swap batch_settle; do
+    # Map friendly name to VkId JSON + file
+    case $vk_name in
+        deposit)       vk_id='{"Deposit":[]}'       ; f=vk_deposit       ;;
+        kyc_credential)vk_id='{"KycCredential":[]}'  ; f=vk_kyc           ;;
+        transfer)      vk_id='{"Transfer":[]}'       ; f=vk_transfer      ;;
+        withdraw)      vk_id='{"Withdraw":[]}'       ; f=vk_withdraw      ;;
+        swap)          vk_id='{"Swap":[]}'           ; f=vk_swap          ;;
+        batch_settle)  vk_id='{"BatchSettle":[]}'    ; f=vk_batch_settle  ;;
+    esac
+    vk_hex=$(xxd -p -c 1000000 "circuit-keys/dev/${f}.bin" | tr -d '\n')
+    $INVOKE --id "$VEIL_CORE" -- init_vk 
+        --admin "$ADMIN" 
+        --vk_id "$vk_id" 
+        --vk_bytes "$vk_hex"
+    echo "  init_vk $vk_name: ok"
+done
+
+# Register ASP as module with VERIFY perm (bit 0x004 = 4)
+$INVOKE --id "$VEIL_CORE" -- register_module 
+    --admin "$ADMIN" --module "$ASP" --perms 4
+echo "  register asp (perm=4): ok"
+
+# ── 4. Initialize ASP ────────────────────────────────────────────────────────
+echo ""
+echo "--- (Re)initializing ASP ---"
+APPROVED_ROOT="${APPROVED_ROOT:-0940b26a62ee9259e50a7af202af473e1eec3737e034e17a6e71a2b207feb656}"
+BLOCKED_ROOT="${BLOCKED_ROOT:-2134e76ac5d21aab186c2be1dd8f84ee880a1e46eaf712f9d371b6df22191f3e}"
+
+# Try to initialize (may fail if already initialized — that's ok)
+$INVOKE --id "$ASP" -- update_approved 
+    --op "$ADMIN" --new_root "$APPROVED_ROOT" --attest 00 2>/dev/null || true
+$INVOKE --id "$ASP" -- update_blocked 
+    --op "$ADMIN" --new_root "$BLOCKED_ROOT" --attest 00 2>/dev/null || true
+echo "  asp roots updated: ok"
+
+# ── 5. Initialize amm_pool ────────────────────────────────────────────────────
+echo ""
+echo "--- Initializing amm_pool ---"
+COMM_PK=000000000000000000000000000000000000000000000000ab54a98ceb1f0ad2
+$INVOKE --id "$AMM_POOL" -- initialize 
+    --admin "$ADMIN" 
+    --core "$VEIL_CORE" 
+    --committee "$ADMIN" 
+    --comm_pk "$COMM_PK" 
+    --batch_k 4
+echo "  initialize: ok"
+
+# In M4, also initialize reserves
+# Let's use a dummy reserve_cm and enc_data. The E2E test will just expect it to exist,
+# but actually we can set it correctly for the E2E test or let the E2E test call initialize_reserves.
+# Let's let the E2E test call it so it can compute the correct poseidon hash dynamically!
+echo "  skipping initialize_reserves (E2E test will call it with specific initial state)"
+
+# Register amm_pool in veil_core with INSERT(1)|SPEND(2) = 3
+$INVOKE --id "$VEIL_CORE" -- register_module 
+    --admin "$ADMIN" --module "$AMM_POOL" --perms 3
+echo "  register amm_pool in veil_core (perm=3): ok"
+
+# Register the admin itself with INSERT(1) so spike tests can insert notes directly.
+# This is a test-only convenience — production uses the deposit flow with ASP gating.
+$INVOKE --id "$VEIL_CORE" -- register_module 
+    --admin "$ADMIN" --module "$ADMIN" --perms 1
+echo "  register admin as INSERT module (spike test convenience): ok"
+
+# ── 6. Update testnet.env ─────────────────────────────────────────────────────
+echo ""
+echo "--- Updating testnet.env ---"
+cat <<EOF > deployments/testnet.env
+# Generated by m4-deploy.sh at $(date -u)
+VEIL_CORE=$VEIL_CORE
+ASP=$ASP
+AMM_POOL=$AMM_POOL
+ADMIN=$ADMIN
+SOROBAN_RPC=$RPC
+NETWORK=$NETWORK
+PASSPHRASE="$PASSPHRASE"
+SECRET=$SECRET
+AUDITOR_PK=$AUDITOR_PK
+APPROVED_ROOT=$APPROVED_ROOT
+BLOCKED_ROOT=$BLOCKED_ROOT
+EOF
+
+echo ""
+echo "=== M4 deploy complete ==="
+echo "  ASP=\$ASP"
+echo ""
+echo "Run e2e test:"
+echo "  source deployments/testnet.env && node e2e-tests/src/amm-settle.test.js"
