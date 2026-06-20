@@ -22,6 +22,7 @@ import { buildPoseidon } from 'circomlibjs';
 
 const CORE_ID  = process.env.VEIL_CORE ?? '';
 const ASP_ID   = process.env.ASP ?? '';
+const TOKEN_ID = process.env.TOKEN ?? '';
 const RPC_URL  = process.env.SOROBAN_RPC ?? 'https://soroban-testnet.stellar.org';
 const SECRET   = process.env.SECRET ?? '';
 const NETWORK  = process.env.NETWORK ?? 'testnet';
@@ -136,6 +137,8 @@ async function testNonApprovedRejected() {
     });
 
     const args = [
+        new StellarSdk.Address(kp.publicKey()).toScVal(),
+        new StellarSdk.Address(TOKEN_ID).toScVal(),
         new StellarSdk.Address(ASP_ID).toScVal(),
         bogusProof,
         bogusPublic,
@@ -156,7 +159,7 @@ async function testApprovedDepositInsertsLeaf() {
     console.log('\n--- Test: approved deposit inserts leaf ---');
     const kp = Keypair.fromSecret(SECRET);
     
-    const { proveDeposit, serializeProof } = await import('../../app/src/prover/deposit.js');
+    const { proveDeposit, serializeProof } = await import('../../client/src/prover/deposit.js');
     const { MerkleTree, buildNonMembershipProof } = await import('./merkle.js');
     const poseidon = await buildPoseidon();
     const F = poseidon.F;
@@ -228,13 +231,15 @@ async function testApprovedDepositInsertsLeaf() {
     const serializedProof = serializeProof(proof);
 
     // 3. Encrypt note to auditor pubkey
-    const { encryptNoteForAuditor } = await import('../../app/src/viewkey/encrypt.js');
+    const { encryptNoteForAuditor } = await import('../../client/src/viewkey/encrypt.js');
     const auditorSk = 42n;
     const auditorPk = F.toObject(poseidon([auditorSk]));
     const auditorCt = await encryptNoteForAuditor(note, auditorPk, 777n);
 
     // 4. Submit deposit tx
     const args = [
+        new StellarSdk.Address(kp.publicKey()).toScVal(),
+        new StellarSdk.Address(TOKEN_ID).toScVal(),
         new StellarSdk.Address(ASP_ID).toScVal(),
         toStruct({
             a: toBytesN64(serializedProof.a),
@@ -299,7 +304,7 @@ async function testAuditorCiphertextDecrypts() {
     //
     // This can be tested locally with the encrypt/decrypt functions:
     const { encryptNoteForAuditor, decryptNoteAsAuditor } = await import(
-        '../../app/src/viewkey/encrypt.js'
+        '../../client/src/viewkey/encrypt.js'
     );
     const poseidon = await buildPoseidon();
     const F = poseidon.F;
@@ -355,4 +360,4 @@ async function main() {
     console.log('\n=== M0 deposit test complete ===');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

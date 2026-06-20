@@ -111,7 +111,10 @@ async function main() {
     const poseidon = await buildPoseidon();
     const F = poseidon.F;
 
-    const aliceSk  = 101n;
+    // Randomize the owner secret so this note's commitment + nullifier are
+    // globally unique each run — the on-chain spent/locked sets are permanent,
+    // so a fixed secret would collide on re-runs (AlreadySpent).
+    const aliceSk  = BigInt('0x' + Buffer.from(crypto.getRandomValues(new Uint8Array(31))).toString('hex'));
     const alicePk  = F.toObject(poseidon([aliceSk]));
     const auditorSk = 42n;
     const auditorPk = F.toObject(poseidon([auditorSk]));
@@ -155,7 +158,7 @@ async function main() {
     // RULE 4: encrypt for auditor (blinding 777)
     const auditorCtDep = await encryptNoteForAuditor(noteA, auditorPk, 777n);
 
-    await submitTx(CORE_ID, 'deposit', [
+    const depositRes = await submitTx(CORE_ID, 'deposit', [
         new StellarSdk.Address(kp.publicKey()).toScVal(),   // depositor
         new StellarSdk.Address(TOKEN_ID).toScVal(),         // token_contract
         new StellarSdk.Address(ASP_ID).toScVal(),
@@ -182,7 +185,9 @@ async function main() {
         toBytes(auditorCtDep),
     ], kp);
 
-    console.log('PASS: Deposit successful (idx 0)');
+    // Authoritative deposit leaf index from the tx result (not an event search).
+    const depositLeafIdx = (() => { try { return BigInt(depositRes.returnValue.u64().toString()); } catch { return null; } })();
+    console.log(`PASS: Deposit successful (idx ${depositLeafIdx})`);
     console.log('Waiting for RPC to index events...');
     await sleep(5000);
 
@@ -323,27 +328,30 @@ async function main() {
     const isSpentDummy = await readTx(CORE_ID, 'is_spent', [toBytesN('00')], kp);
     assert(isSpentDummy.b() === false, 'Dummy nullifier (zero) is NOT spent');
 
-    // Change note was inserted at index 1 (deposit was idx 0)
-    const changeIdx = 1n;
+    // The deposit landed at leafIndexA; the change note is inserted immediately
+    // after it during withdraw (use the real on-chain indices, not a fixed 0/1 —
+    // the shared tree may already hold leaves from other tests).
+    const depositIdx = depositLeafIdx ?? BigInt(leafIndexA);
+    const changeIdx = depositIdx + 1n;
     const storedCtVal = await readTx(CORE_ID, 'ciphertext_at', [toU64(changeIdx)], kp);
     const storedCt = Buffer.from(storedCtVal.bytes());
-    assert(storedCt.length > 0, 'Change note auditor ciphertext stored at idx 1 (RULE 4)');
+    assert(storedCt.length > 0, `Change note auditor ciphertext stored at idx ${changeIdx} (RULE 4)`);
 
     // ── 4. Auditor decrypts in-scope notes ───────────────────────────────────
 
     console.log('\n--- 4. Auditor selectively discloses ---');
 
-    // Deposit note (idx 0)
+    // Deposit note (at its real on-chain index)
     const ctIdx0Val = await readTx(CORE_ID, 'request_disclosure', [
         new StellarSdk.Address(kp.publicKey()).toScVal(),
-        toU64(0n),
+        toU64(depositIdx),
     ], kp);
     const ct0 = Buffer.from(ctIdx0Val.bytes());
-    assert(ct0.length > 0, 'request_disclosure(idx=0) returns ciphertext');
+    assert(ct0.length > 0, `request_disclosure(idx=${depositIdx}) returns ciphertext`);
 
-    const decrypted0 = decryptNoteAsAuditor(ct0, auditorSk);
-    assert(decrypted0.amount === noteA.amount, 'Auditor decrypts deposit amount correctly (idx 0)');
-    assert(decrypted0.owner_pk === noteA.owner_pk, 'Auditor decrypts deposit owner_pk correctly (idx 0)');
+    const decrypted0 = await decryptNoteAsAuditor(ct0, auditorSk);
+    assert(decrypted0.amount === noteA.amount, 'Auditor decrypts deposit amount correctly');
+    assert(decrypted0.owner_pk === noteA.owner_pk, 'Auditor decrypts deposit owner_pk correctly');
 
     // Change note (idx 1)
     const ctIdx1Val = await readTx(CORE_ID, 'request_disclosure', [
@@ -353,7 +361,7 @@ async function main() {
     const ct1 = Buffer.from(ctIdx1Val.bytes());
     assert(ct1.length > 0, 'request_disclosure(idx=1) returns change note ciphertext');
 
-    const decrypted1 = decryptNoteAsAuditor(ct1, auditorSk);
+    const decrypted1 = await decryptNoteAsAuditor(ct1, auditorSk);
     assert(decrypted1.amount === changeAmount, 'Auditor decrypts change amount (300) correctly (idx 1)');
     assert(decrypted1.owner_pk === alicePk,   'Auditor decrypts change owner_pk correctly (idx 1)');
 
@@ -399,4 +407,4 @@ async function main() {
     console.log('All TEST_PLAN M2 assertions satisfied: US-2, US-5, RULE 3, RULE 4');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

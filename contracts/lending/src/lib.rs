@@ -73,6 +73,17 @@ pub struct PriceData {
     pub timestamp: u64,
 }
 
+/// Oracle-bound public inputs the proof commits to. Bundled into one struct so
+/// `open_loan` stays within Soroban's 10-argument-per-function limit.
+/// Each field MUST equal the freshly-read on-chain value (THREAT_MODEL §5).
+#[contracttype]
+#[derive(Clone)]
+pub struct OracleClaim {
+    pub oracle_price:    i128,
+    pub oracle_decimals: u32,
+    pub borrow_price:    i128,
+}
+
 // ─── shared veil_core types ───────────────────────────────────────────────────
 // Names must match veil_core exactly (Soroban serialises contracttype enums by name).
 
@@ -196,12 +207,15 @@ impl Lending {
         collat_asset:     Asset,
         borrow_asset:     Asset,
         root:             BytesN<32>,
-        // Public inputs that must match oracle readings (proof's claimed values)
-        claimed_oracle_price:    i128,
-        claimed_oracle_decimals: u32,
-        claimed_borrow_price:    i128,
+        // Public inputs that must match oracle readings (proof's claimed values),
+        // bundled to stay within the 10-arg function limit.
+        claim:            OracleClaim,
     ) -> Result<u64, LendError> {
         caller.require_auth();
+
+        let claimed_oracle_price    = claim.oracle_price;
+        let claimed_oracle_decimals = claim.oracle_decimals;
+        let claimed_borrow_price    = claim.borrow_price;
 
         if auditor_ct.len() == 0 {
             return Err(LendError::MissingAuditorCt);
@@ -695,9 +709,7 @@ mod tests {
             &dummy_asset(&t.env),
             &dummy_asset(&t.env),
             &root,
-            &price,
-            &6u32,   // oracle_decimals
-            &price,  // borrow_price (same as collat price for test)
+            &OracleClaim { oracle_price: price, oracle_decimals: 6u32, borrow_price: price },  // borrow_price (same as collat price for test)
         );
         assert_eq!(loan_id, 0u64);
 
@@ -730,9 +742,7 @@ mod tests {
             &dummy_asset(&t.env),
             &dummy_asset(&t.env),
             &t.core().current_root(),
-            &100i128,
-            &6u32,
-            &100i128,
+            &OracleClaim { oracle_price: 100i128, oracle_decimals: 6u32, borrow_price: 100i128 },
         );
         assert!(matches!(result, Err(Ok(LendError::MissingAuditorCt))));
     }
@@ -752,9 +762,8 @@ mod tests {
             &dummy_asset(&t.env),
             &dummy_asset(&t.env),
             &t.core().current_root(),
-            &999i128,  // WRONG — oracle returns 100
-            &6u32,
-            &100i128,
+            // WRONG oracle_price (999) — oracle returns 100
+            &OracleClaim { oracle_price: 999i128, oracle_decimals: 6u32, borrow_price: 100i128 },
         );
         assert!(matches!(result, Err(Ok(LendError::OracleMismatch))));
     }
@@ -778,9 +787,7 @@ mod tests {
             &dummy_asset(&t.env),
             &dummy_asset(&t.env),
             &t.core().current_root(),
-            &100i128,
-            &6u32,
-            &100i128,
+            &OracleClaim { oracle_price: 100i128, oracle_decimals: 6u32, borrow_price: 100i128 },
         );
         assert!(matches!(result, Err(Ok(LendError::StaleOracle))));
     }
@@ -806,9 +813,7 @@ mod tests {
             &dummy_asset(&t.env),
             &dummy_asset(&t.env),
             &root,
-            &price,
-            &6u32,
-            &price,
+            &OracleClaim { oracle_price: price, oracle_decimals: 6u32, borrow_price: price },
         );
 
         // Collateral is locked
@@ -852,7 +857,7 @@ mod tests {
             &t.admin, &dummy_proof(&t.env),
             &collat_nf, &borrow_cm, &ct,
             &dummy_asset(&t.env), &dummy_asset(&t.env),
-            &root, &price, &6u32, &price,
+            &root, &OracleClaim { oracle_price: price, oracle_decimals: 6u32, borrow_price: price },
         );
 
         let repay_nf = make_bytes32(&t.env, 80);
@@ -884,7 +889,7 @@ mod tests {
             &t.admin, &dummy_proof(&t.env),
             &collat_nf, &make_bytes32(&t.env, 51), &make_ct(&t.env),
             &dummy_asset(&t.env), &dummy_asset(&t.env),
-            &t.core().current_root(), &price, &6u32, &price,
+            &t.core().current_root(), &OracleClaim { oracle_price: price, oracle_decimals: 6u32, borrow_price: price },
         );
 
         // Loan is healthy (price unchanged) — liquidation must fail with Healthy
@@ -907,7 +912,7 @@ mod tests {
             &t.admin, &dummy_proof(&t.env),
             &collat_nf, &make_bytes32(&t.env, 56), &make_ct(&t.env),
             &dummy_asset(&t.env), &dummy_asset(&t.env),
-            &t.core().current_root(), &open_price, &6u32, &open_price,
+            &t.core().current_root(), &OracleClaim { oracle_price: open_price, oracle_decimals: 6u32, borrow_price: open_price },
         );
 
         // Collateral is locked
@@ -941,7 +946,7 @@ mod tests {
             &t.admin, &dummy_proof(&t.env),
             &collat_nf, &make_bytes32(&t.env, 61), &make_ct(&t.env),
             &dummy_asset(&t.env), &dummy_asset(&t.env),
-            &t.core().current_root(), &price, &6u32, &price,
+            &t.core().current_root(), &OracleClaim { oracle_price: price, oracle_decimals: 6u32, borrow_price: price },
         );
 
         // Collateral nullifier is in LOCKED set
@@ -971,7 +976,7 @@ mod tests {
             &t.admin, &dummy_proof(&t.env),
             &make_bytes32(&t.env, 90), &make_bytes32(&t.env, 91), &make_ct(&t.env),
             &dummy_asset(&t.env), &dummy_asset(&t.env),
-            &t.core().current_root(), &large_price, &6u32, &large_price,
+            &t.core().current_root(), &OracleClaim { oracle_price: large_price, oracle_decimals: 6u32, borrow_price: large_price },
         );
         // Should succeed (not overflow panic) — proof verification bypassed in test mode
         assert!(result.is_ok());
@@ -988,7 +993,7 @@ mod tests {
             &t.admin, &dummy_proof(&t.env),
             &collat_nf, &make_bytes32(&t.env, 96), &make_ct(&t.env),
             &dummy_asset(&t.env), &dummy_asset(&t.env),
-            &t.core().current_root(), &open_price, &6u32, &open_price,
+            &t.core().current_root(), &OracleClaim { oracle_price: open_price, oracle_decimals: 6u32, borrow_price: open_price },
         );
 
         // Drop price drastically — should still liquidate correctly (not overflow)

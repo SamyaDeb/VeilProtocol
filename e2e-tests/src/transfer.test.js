@@ -375,4 +375,4 @@ async function main() {
     console.log('\n=== M1 transfer test complete ===');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

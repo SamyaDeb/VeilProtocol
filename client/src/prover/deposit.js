@@ -18,7 +18,8 @@ let ZKEY_PATH = '/circuit-keys/dev/deposit_final.zkey';
 
 if (typeof window === 'undefined') {
     const path = await import('path');
-    const rootDir = process.cwd();
+    const { fileURLToPath } = await import('url');
+    const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
     WASM_PATH = path.resolve(rootDir, 'circuits/build/deposit_js/deposit.wasm');
     ZKEY_PATH = path.resolve(rootDir, 'circuit-keys/dev/deposit_final.zkey');
 }

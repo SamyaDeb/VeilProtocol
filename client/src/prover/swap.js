@@ -5,7 +5,8 @@ let ZKEY_PATH = '/circuit-keys/dev/swap_final.zkey';
 
 if (typeof window === 'undefined') {
     const path = await import('path');
-    const rootDir = process.cwd();
+    const { fileURLToPath } = await import('url');
+    const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
     WASM_PATH = path.resolve(rootDir, 'circuits/build/swap_js/swap.wasm');
     ZKEY_PATH = path.resolve(rootDir, 'circuit-keys/dev/swap_final.zkey');
 }

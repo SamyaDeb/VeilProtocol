@@ -437,6 +437,37 @@ async function main() {
         { amount: 0n, asset_id: ASSET_ID, blinding: 0n, owner_pk: 0n }, auditorPk, 1n,
     );
 
+    // Identity self-swap clearing: orders buy ASSET_ID (asset_b) at 1:1, so each
+    // output amount equals its input. Reserves must be initialized on-chain and
+    // the clearingState must match for the batch_settle proof to verify.
+    const pre_reserve_a = 1n;
+    const pre_reserve_b = 1_000_000n;     // ample to cover the batch's buy side
+    const pre_reserve_blinding = 12321n;
+    const pre_reserve_cm = F.toObject(poseidon([pre_reserve_a, pre_reserve_b, pre_reserve_blinding]));
+    try {
+        await submitTx(AMM_ID, 'initialize_reserves', [
+            toBytesN(pre_reserve_cm.toString(16)),
+            toBytes(Buffer.from('deadbeef', 'hex')),
+        ], kp);
+        console.log('Reserves initialized');
+    } catch (e) {
+        console.log('Reserves init skipped: ' + e.message.slice(0, 50));
+    }
+
+    const clearingState = {
+        asset_a: 0n,
+        asset_b: ASSET_ID,
+        price_num: 1n,
+        price_den: 1n,
+        pre_reserve_a,
+        pre_reserve_b,
+        pre_reserve_blinding,
+        post_reserve_blinding: 45654n,
+        fee_a: 0n,
+        fee_b: 0n,
+        post_enc_reserves: 'deadbeef',
+    };
+
     const orders = ordersSubmitted.map(o => o.decrypted);
     const { cmOuts } = await settleBatch(
         {
@@ -449,6 +480,7 @@ async function main() {
         batchId,
         orders,
         Buffer.from(auditorCt, 'hex').toString('hex'),
+        clearingState,
     );
 
     assert(true, 'settle_batch succeeded on-chain');
@@ -612,4 +644,4 @@ async function main() {
     console.log('      Run `cargo test -p amm_pool` to confirm refund liveness.');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

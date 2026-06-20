@@ -15,7 +15,7 @@
  * Required env vars: VEIL_CORE, LENDING, ASP, SECRET, SOROBAN_RPC, NETWORK
  */
 
-import { rpc, Keypair, Contract, TransactionBuilder, Networks, xdr } from '@stellar/stellar-sdk';
+import { rpc, Keypair, Contract, TransactionBuilder, Networks, xdr, Address } from '@stellar/stellar-sdk';
 import { buildPoseidon } from 'circomlibjs';
 import { proveLend, serializeProof, serializePublicInputs } from '../../client/src/prover/lend.js';
 import { encryptNoteForAuditor } from '../../client/src/viewkey/encrypt.js';
@@ -62,6 +62,12 @@ function toI128(v) {
 }
 function toVec(vals) { return xdr.ScVal.scvVec(vals); }
 function toSymbol(s) { return xdr.ScVal.scvSymbol(s); }
+
+// contracttype struct → ScVal map (keys sorted, matching Soroban field order)
+function toStruct(obj) {
+    const entries = Object.keys(obj).sort().map(k => new xdr.ScMapEntry({ key: toSymbol(k), val: obj[k] }));
+    return xdr.ScVal.scvMap(entries);
+}
 
 // Asset::Other(Symbol) encoding
 function assetOther(sym) {
@@ -111,6 +117,44 @@ async function trySubmitTx(contractId, method, args, kp) {
     }
 }
 
+// Reconstruct the on-chain commitment tree leaves from `leaf inserted` events.
+// open_loan proves Merkle membership of the collateral note at the on-chain
+// root, so the proof must be built against the real tree, not a fabricated one.
+async function syncTreeLeaves(server, coreId, lookback = 2000) {
+    const latest      = await server.getLatestLedger();
+    const startLedger = Math.max(1, latest.sequence - lookback);
+    const resp = await server.getEvents({
+        startLedger,
+        filters: [{ type: 'contract', contractIds: [coreId] }],
+        limit: 10000,
+    });
+    const leaves = [];
+    for (const ev of resp.events ?? []) {
+        if (!ev.topic || ev.topic.length < 2) continue;
+        try {
+            const t0 = typeof ev.topic[0] === 'string'
+                ? xdr.ScVal.fromXDR(ev.topic[0], 'base64').sym().toString()
+                : ev.topic[0].sym().toString();
+            const t1 = typeof ev.topic[1] === 'string'
+                ? xdr.ScVal.fromXDR(ev.topic[1], 'base64').sym().toString()
+                : ev.topic[1].sym().toString();
+            if (t0 === 'leaf' && t1 === 'inserted') {
+                const vec = typeof ev.value === 'string'
+                    ? xdr.ScVal.fromXDR(ev.value, 'base64').vec()
+                    : ev.value.vec();
+                const cmBytes = vec[0].bytes();
+                const idx     = Number(vec[1].u64().low ?? vec[1].u64());
+                leaves[idx] = BigInt('0x' + cmBytes.toString('hex'));
+            }
+        } catch {}
+    }
+    return leaves;
+}
+
+function u64FromResult(res) {
+    try { return BigInt(res.returnValue.u64().toString()); } catch { return null; }
+}
+
 async function readCoreRoot() {
     const server = new rpc.Server(RPC_URL);
     const contract = new Contract(CORE_ID);
@@ -158,7 +202,7 @@ async function readIsLocked(nullifier) {
 function sparseProof(leaves, targetIdx, depth, poseidon) {
     const F = poseidon.F;
     let cur = new Map();
-    for (let i = 0; i < leaves.length; i++) cur.set(i, leaves[i]);
+    for (let i = 0; i < leaves.length; i++) cur.set(i, leaves[i] ?? 0n);
     const pathElements = [], pathIndices = [];
     let ci = targetIdx;
     for (let d = 0; d < depth; d++) {
@@ -205,12 +249,33 @@ async function main() {
     const collat_blind  = 111111n;
     const owner_pk      = F.toObject(poseidon([owner_sk]));
     const collat_cm     = F.toObject(poseidon([collat_amount, collat_asset, collat_blind, owner_pk]));
-    const leaf_index    = 0n;
-    const collat_nf     = F.toObject(poseidon([owner_sk, leaf_index, collat_cm]));
 
-    // Build sparse Merkle proof for a tree containing just this leaf
+    // Insert the collateral commitment into veil_core so its root is known
+    // on-chain (RULE 4: paired auditor ciphertext). open_loan rejects an unknown
+    // root, so the proof below is built against the REAL on-chain tree.
+    const server0 = new rpc.Server(RPC_URL);
+    const collatCt = await encryptNoteForAuditor(
+        { amount: collat_amount, asset_id: collat_asset, blinding: collat_blind, owner_pk },
+        F.toObject(poseidon([42n])), 555n,
+    );
+    let leafIdxNum;
+    {
+        const insRes = await submitTx(CORE_ID, 'insert_commitment', [
+            new Address(kp.publicKey()).toScVal(),
+            toBytesN(collat_cm),
+            toBytes(Buffer.from(collatCt).toString('hex')),
+        ], kp);
+        leafIdxNum = Number(u64FromResult(insRes));
+        console.log(`  collateral inserted at leaf ${leafIdxNum}`);
+    }
+
+    // Reconstruct the real tree and build the membership proof at our index.
+    const treeLeaves = await syncTreeLeaves(server0, CORE_ID);
+    treeLeaves[leafIdxNum] = collat_cm;
+    const leaf_index = BigInt(leafIdxNum);
+    const collat_nf  = F.toObject(poseidon([owner_sk, leaf_index, collat_cm]));
     const { root: testRoot, pathElements, pathIndices } =
-        sparseProof([collat_cm], 0, DEPTH, poseidon);
+        sparseProof(treeLeaves, leafIdxNum, DEPTH, poseidon);
 
     // ─── 2. Prepare borrow note ────────────────────────────────────────────────
     const borrow_amount  = 7_000n;   // 70% LTV — well within 75%
@@ -229,6 +294,7 @@ async function main() {
     const auditor_ct = await encryptNoteForAuditor(
         { amount: borrow_amount, asset_id: borrow_asset, blinding: borrow_blind, owner_pk },
         auditorPk,
+        999n,   // encryption blinding (RULE 4 — required by encryptNoteForAuditor)
     );
 
     // ─── T5.1: borrow within LTV succeeds ─────────────────────────────────────
@@ -258,7 +324,7 @@ async function main() {
     const borrowPrArg = toI128(borrow_price);
 
     const loanRes = await submitTx(LENDING_ID, 'open_loan', [
-        kp.publicKey(),
+        new Address(kp.publicKey()).toScVal(),
         proofArg,
         collatNfArg,
         borrowCmArg,
@@ -266,9 +332,7 @@ async function main() {
         assetArg,   // collat_asset (Reflector feed)
         assetArg,   // borrow_asset (Reflector feed)
         rootArg,
-        oraclePrArg,
-        oracleDecArg,
-        borrowPrArg,
+        toStruct({ oracle_price: oraclePrArg, oracle_decimals: oracleDecArg, borrow_price: borrowPrArg }),
     ], kp);
 
     assert(loanRes.status === 'SUCCESS', 'T5.1: open_loan within LTV succeeds');
@@ -280,7 +344,7 @@ async function main() {
 
     // Attempting to spend (via core.spend directly simulated) should fail
     const spendFail = await trySubmitTx(CORE_ID, 'spend', [
-        kp.publicKey(),
+        new Address(kp.publicKey()).toScVal(),
         toBytesN(collat_nf),
     ], kp);
     assert(!spendFail.ok, 'T5.2: direct spend of locked nullifier is rejected');
@@ -313,7 +377,7 @@ async function main() {
     const dummyProof = buildProofArg({ pi_a: ['0', '0', '1'], pi_b: [['0','0'],['0','0'],['1','0']], pi_c: ['0', '0', '1'] });
 
     const repayRes = await trySubmitTx(LENDING_ID, 'repay', [
-        kp.publicKey(),
+        new Address(kp.publicKey()).toScVal(),
         dummyProof,
         toBytesN(repay_nf),
         toBytesN(collat_nf),
@@ -364,7 +428,7 @@ async function main() {
     // On testnet with a real Reflector feed, submit with price=0 which will never
     // match and will trigger OracleMismatch (or StaleOracle if feed is stale).
     const staleResult = await trySubmitTx(LENDING_ID, 'open_loan', [
-        kp.publicKey(),
+        new Address(kp.publicKey()).toScVal(),
         proofArg,           // valid proof (for different price)
         collatNfArg,
         borrowCmArg,
@@ -372,9 +436,8 @@ async function main() {
         assetArg,
         assetArg,
         rootArg,
-        toI128(0n),         // oracle_price = 0 — will not match on-chain price
-        oracleDecArg,
-        toI128(0n),
+        // oracle_price = 0 will not match on-chain price → OracleMismatch
+        toStruct({ oracle_price: toI128(0n), oracle_decimals: oracleDecArg, borrow_price: toI128(0n) }),
     ], kp);
     assert(!staleResult.ok, 'T5.5: mismatched oracle_price rejected on-chain (OracleMismatch/StaleOracle)');
 
@@ -383,4 +446,4 @@ async function main() {
     console.log('  veil e2e lending --network testnet');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

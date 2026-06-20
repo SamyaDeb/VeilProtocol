@@ -308,6 +308,10 @@ impl VeilCore {
         asp_proof: asp_interface::AspMembershipProof,
         auditor_ct: Bytes,
     ) -> Result<u64, VeilError> {
+        // The depositor must authorize at the root invocation so the token
+        // transfer sub-invocation below is tied to the root call (Soroban auth).
+        depositor.require_auth();
+
         // RULE 1: ASP gate — must pass before anything else.
         // Cross-contract call to asp.check_entry.
         let veil_addr = env.current_contract_address();

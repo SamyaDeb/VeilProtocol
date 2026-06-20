@@ -325,4 +325,4 @@ async function main() {
     console.log('\n=== M5 E2E Validation Complete ===');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

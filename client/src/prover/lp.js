@@ -7,7 +7,8 @@ let ZKEY_PATH_REM = '/circuit-keys/dev/remove_liquidity_final.zkey';
 
 if (typeof window === 'undefined') {
     const path = await import('path');
-    const rootDir = process.cwd();
+    const { fileURLToPath } = await import('url');
+    const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
     WASM_PATH_ADD = path.resolve(rootDir, 'circuits/build/add_liquidity_js/add_liquidity.wasm');
     ZKEY_PATH_ADD = path.resolve(rootDir, 'circuit-keys/dev/add_liquidity_final.zkey');
     WASM_PATH_REM = path.resolve(rootDir, 'circuits/build/remove_liquidity_js/remove_liquidity.wasm');

@@ -4,14 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deposit": "node src/deposit.test.js",
-    "transfer": "node src/transfer.test.js",
-    "withdraw-and-audit": "node src/withdraw-and-audit.test.js",
-    "amm-spike": "node src/amm-spike.test.js",
-    "lending": "node src/lending.test.js",
-    "tampered-proof-rejected": "node src/tampered-proof-rejected.test.js",
-    "mainnet-roundtrip": "node src/mainnet-roundtrip.test.js",
-    "test": "node src/deposit.test.js"
+    "deposit": "node --env-file=../deployments/testnet.env src/deposit.test.js",
+    "transfer": "node --env-file=../deployments/testnet.env src/transfer.test.js",
+    "withdraw-and-audit": "node --env-file=../deployments/testnet.env src/withdraw-and-audit.test.js",
+    "amm-spike": "node --env-file=../deployments/testnet.env src/amm-spike.test.js",
+    "amm-settle": "node --env-file=../deployments/testnet.env src/amm-settle.test.js",
+    "m5": "node --env-file=../deployments/testnet.env src/m5_e2e.test.js",
+    "lending": "node --env-file=../deployments/testnet.env src/lending.test.js",
+    "tampered-proof-rejected": "node --env-file=../deployments/testnet.env src/tampered-proof-rejected.test.js",
+    "mainnet-roundtrip": "node --env-file=../deployments/testnet.env src/mainnet-roundtrip.test.js",
+    "test": "node --env-file=../deployments/testnet.env src/deposit.test.js"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^16.0.1",

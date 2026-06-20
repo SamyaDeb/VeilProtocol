@@ -366,4 +366,4 @@ async function main() {
     console.log('\n=== M4 AMM settle test complete ===');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

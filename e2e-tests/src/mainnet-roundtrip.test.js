@@ -56,22 +56,39 @@ function assetOther(sym) {
     ]);
 }
 
+// Race an RPC promise against a hard timeout. Soroban testnet RPC occasionally
+// holds a connection open without responding; an un-timed `await` on it would
+// hang the whole suite (the poll-loop counter never advances while stuck inside
+// a single await). Every server.* call below is wrapped so a stuck request fails
+// fast instead of stalling forever.
+function withTimeout(promise, ms, label) {
+    return Promise.race([
+        promise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error(`RPC timeout (${label}, ${ms}ms)`)), ms)),
+    ]);
+}
+
 async function submitTx(contractId, method, args, kp) {
     const server = new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') });
-    const account = await server.getAccount(kp.publicKey());
+    const account = await withTimeout(server.getAccount(kp.publicKey()), 20000, 'getAccount');
     const contract = new Contract(contractId);
     const tx = new TransactionBuilder(account, { fee: '1000000', networkPassphrase: PASSPHRASE })
         .addOperation(contract.call(method, ...args))
         .setTimeout(30)
         .build();
-    let prepared = await server.prepareTransaction(tx);
+    let prepared = await withTimeout(server.prepareTransaction(tx), 40000, 'prepare');
     prepared.sign(kp);
-    const send = await server.sendTransaction(prepared);
+    const send = await withTimeout(server.sendTransaction(prepared), 20000, 'send');
     if (send.status === 'ERROR') throw new Error(`Submit failed: ${send.errorResultXdr}`);
     let res = send;
+    let tries = 0;
     while (res.status === 'PENDING' || res.status === 'NOT_FOUND') {
+        if (tries++ > 30) throw new Error(`Tx ${send.hash} not confirmed after ${tries} polls (status=${res.status})`);
         await sleep(2000);
-        res = await server.getTransaction(send.hash);
+        // A hung getTransaction is treated as "still pending" so the bounded
+        // loop keeps making progress rather than blocking on one stuck await.
+        res = await withTimeout(server.getTransaction(send.hash), 15000, 'getTransaction')
+            .catch(() => ({ status: 'NOT_FOUND' }));
     }
     if (res.status !== 'SUCCESS') throw new Error(`Tx failed: ${JSON.stringify(res)}`);
     return res;
@@ -88,13 +105,13 @@ async function trySubmitTx(contractId, method, args, kp) {
 
 async function readTx(contractId, method, args, kp) {
     const server  = new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') });
-    const account = await server.getAccount(kp.publicKey());
+    const account = await withTimeout(server.getAccount(kp.publicKey()), 20000, 'getAccount');
     const contract = new Contract(contractId);
     const tx = new TransactionBuilder(account, { fee: '1000000', networkPassphrase: PASSPHRASE })
         .addOperation(contract.call(method, ...args))
         .setTimeout(30)
         .build();
-    const sim = await server.simulateTransaction(tx);
+    const sim = await withTimeout(server.simulateTransaction(tx), 30000, 'simulate');
     if (!sim.result) throw new Error(`Simulate failed`);
     return sim.result.retval;
 }
@@ -128,12 +145,21 @@ function sparseProof(leaves, targetIdx, depth, poseidon) {
 
 async function getIndexerAnonymitySet() {
     try {
-        const fetch = (await import('node-fetch')).default || globalThis.fetch;
-        const res = await fetch(`${INDEXER_URL}/anonymity-set`);
-        const data = await res.json();
-        return data.commitment_count ?? 0;
+        const fetchFn = globalThis.fetch || (await import('node-fetch')).default;
+        // The indexer is optional for this smoke test. A stale process may hold
+        // the port open without responding, so bound the request — never block
+        // the whole suite waiting on it.
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 4000);
+        try {
+            const res = await fetchFn(`${INDEXER_URL}/anonymity-set`, { signal: ctrl.signal });
+            const data = await res.json();
+            return data.commitment_count ?? 0;
+        } finally {
+            clearTimeout(t);
+        }
     } catch {
-        return 0; // Return 0 if indexer is not reachable
+        return 0; // Return 0 if indexer is not reachable / not responding
     }
 }
 
@@ -141,6 +167,13 @@ async function getIndexerAnonymitySet() {
 
 async function main() {
     console.log('=== Veil Protocol M8 — Mainnet Smoke Test ===');
+    // Global watchdog: an e2e smoke test must never hang the CI. If the whole
+    // run exceeds this budget, fail loudly rather than block forever.
+    const watchdog = setTimeout(() => {
+        console.error('FAIL: global watchdog — test exceeded 240s budget');
+        process.exit(1);
+    }, 240000);
+    watchdog.unref();
     const kp = Keypair.fromSecret(SECRET);
     const poseidon = await buildPoseidon();
     const F = poseidon.F;
@@ -212,7 +245,7 @@ async function main() {
         await submitTx(ASP_ID, 'update_approved', [new Address(kp.publicKey()).toScVal(), toBytesN(approvedTree.root.toString(16)), toBytes('00')], kp);
         await submitTx(ASP_ID, 'update_blocked', [new Address(kp.publicKey()).toScVal(), toBytesN(blockedTree.root.toString(16)), toBytes('00')], kp);
     }
-    
+
     const countBefore = await getIndexerAnonymitySet();
     const args = [
         new Address(kp.publicKey()).toScVal(),
@@ -365,7 +398,7 @@ async function main() {
     }
 
     const lendRes = await trySubmitTx(LENDING_ID, 'open_loan', [
-        kp.publicKey(),
+        new Address(kp.publicKey()).toScVal(),
         toStruct({ a: toBytesN64('00'.repeat(64)), b: toBytesN128('00'.repeat(128)), c: toBytesN64('00'.repeat(64)) }),
         toBytesN(nf_in_0.toString(16)),
         toBytesN(cm_change.toString(16)),
@@ -373,13 +406,15 @@ async function main() {
         assetOther('BENJI'),
         assetOther('BENJI'),
         toBytesN(merkleProof.root.toString(16)),
-        toI128(0n), // mismatched price
-        toU32(7),
-        toI128(0n),
+        // oracle claim bundled (mismatched price → expected reject)
+        toStruct({ oracle_price: toI128(0n), oracle_decimals: toU32(7), borrow_price: toI128(0n) }),
     ], kp);
     assert(!lendRes.ok, 'Borrow attempt with mismatched oracle_price public input is rejected');
 
     console.log('\n=== M8 mainnet-roundtrip test complete ===');
+    clearTimeout(watchdog);
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+// Exit explicitly: the Soroban RPC client keeps keep-alive sockets open, which
+// would otherwise hold the event loop and prevent `npm run` from returning.
+main().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
