@@ -258,24 +258,6 @@ Full deployment configs: [`deployments/testnet.json`](deployments/testnet.json)
 
 ---
 
-## Milestone roadmap
-
-| Milestone | Status | What ships |
-|-----------|--------|-----------|
-| **M0** — ShieldCore + ASP deposit | ✅ | KYC-gated deposit, auditor ciphertext, indexer |
-| **M1** — Shielded transfer | ✅ | Note spend + create, double-spend rejection |
-| **M2** — Withdraw + auditor UI | ✅ | Public exit, view-key selective disclosure |
-| **M3** — AMM de-risk spike (K=4) | ✅ | Flow-encryption, mock committee, settle-or-refund |
-| **M4** — Encrypted reserves + clearing | ✅ | Real batch clearing, reserve ZK proof, slippage |
-| **M5** — Shielded LP + portability | ✅ | LP add/remove, fee accrual, cross-module note reuse |
-| **M6** — Private RWA lending | ✅ | LTV proof, Reflector oracle binding, liquidation |
-| **M7** — Ceremony + dual audit | 🔜 | Multi-party Phase-2, contract + circuit audits |
-| **M8** — Mainnet + BENJI | 🔜 | Live BENJI, Reflector mainnet feeds, monitoring |
-
-Detailed milestone plans: [`docs/ROADMAP.md`](docs/ROADMAP.md)
-
----
-
 ## Security
 
 Veil is pre-audit software. Do not use with real assets until M7 audit completion.
@@ -323,14 +305,6 @@ Bug bounty: [`docs/BUG_BOUNTY.md`](docs/BUG_BOUNTY.md)
 | Oracle | Reflector (SEP-40) |
 | Indexer | Node.js + Soroban-RPC events |
 | Trusted setup | Powers-of-Tau (Phase-1 reuse) + own Phase-2 ceremony |
-
----
-
-## SCF grant
-
-Veil Protocol is funded by the Stellar Community Fund (SCF) v7.0 build award, four tranches (10% / 20% / 30% / 40%). Audit funded by the SCF Soroban Audit Bank.
-
-Full proposal: [`docs/SCF_PROPOSAL.md`](docs/SCF_PROPOSAL.md)
 
 ---
 
