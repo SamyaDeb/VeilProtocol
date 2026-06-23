@@ -1,0 +1,29 @@
+{
+  "network": "testnet",
+  "rpc_url": "https://soroban-testnet.stellar.org",
+  "network_passphrase": "Test SDF Network ; September 2015",
+
+  "contracts": {
+    "veil_core": "CALUOS4OOU5TMEFDZZNJA4Q6LPU4QTNYG3I3KQKZJYSICFJV233CXVAW",
+    "asp": "CBHO57DREGTP3YR5NX7TUKMOAQNJD7MPBAV5NIUNF5UP6KTBVVOSTO66",
+    "amm_pool": "CCNOAICDH5HFB4TMM23YOCCK57D2FQXI3JMNYBKTQFPDM25E5TUS3VHM",
+    "lending": "CAXZJRTMMR2BPATZNNSR3BLZIQZ6KT3GW2AF7R6WPR2IG23EXBC2GABA",
+    "viewkey": ""
+  },
+
+  "assets": {
+    "TEST_RWA": {
+      "note": "Self-issued testnet RWA token used for development.",
+      "token_contract": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      "code": "TEST-RWA"
+    }
+  },
+
+  "auditor": {
+    "pubkey": "1b408dafebeddf0871388399b1e53bd065fd70f18580be5cdde15d7eb2c52743",
+    "note": "Dev auditor BN254 pubkey (field element). Testnet only."
+  },
+
+  "indexer_url": "http://localhost:3001",
+  "_source": "Mirror of deployments/testnet.env — keep in sync with deploy scripts."
+}
